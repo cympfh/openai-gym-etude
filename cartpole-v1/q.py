@@ -1,5 +1,4 @@
 import itertools
-import math
 import random
 from typing import List, Tuple
 
@@ -36,14 +35,13 @@ class Q:
     def __init__(self,
                  env: gym.Env,
                  alpha=1.0,
-                 alpha_min=0.01,
+                 alpha_min=0.1,
                  gamma=0.98,
                  lr=0.3,
                  decay=0.001,
                  batch_size=64, memory_size=64*4):
 
         # hyper parameters for Q-learning
-        self.decay = decay
         self.alpha = alpha
         self.alpha_min = alpha_min
         self.gamma = gamma
@@ -52,9 +50,9 @@ class Q:
 
         # learning Q-value by NN
         self.model = torch.nn.Sequential(
-                torch.nn.Linear(4, 8),
+                torch.nn.Linear(4, 3),
                 torch.nn.ReLU(),
-                torch.nn.Linear(8, 2),
+                torch.nn.Linear(3, 2),
         )
         self.loss = torch.nn.MSELoss()
         self.opt = torch.optim.Adam(self.model.parameters(),
@@ -69,8 +67,12 @@ class Q:
         y = self.model(x)
         return y[action]
 
-    def __call__(self, state, action):
-        return self.value(state, action)
+    def prob(self, state: State, action: Action) -> float:
+        """Prob(action | state)"""
+        x = torch.tensor(state, dtype=torch.float32)
+        y = self.model(x)
+        p = torch.nn.Softmax()(y)
+        return float(p[action])
 
     def update(self,
                state: State,
@@ -83,8 +85,8 @@ class Q:
         -------
         loss : float
         """
-        self.alpha = self.alpha * (1.0 - self.decay)
-        alpha = max(self.alpha_min, self.alpha)
+        self.alpha *= 0.99999
+        alpha = max(self.alpha, self.alpha_min)
         gamma = self.gamma
 
         q_prev = self.value(state, action)
@@ -139,7 +141,7 @@ class Decision:
 
     def epsilon(self):
         """epsilon-greedy"""
-        return 1.0 / max(1, self.tries // 100)
+        return 1.0 / max(1, self.tries // 10)
 
     def __call__(self, state: State) -> Action:
         """choice an action"""
@@ -147,11 +149,10 @@ class Decision:
         # epsilon-greedy
         if random.random() < self.epsilon():
             return self.env.action_space.sample()
-        # softmax
-        qs = [float(self.q(state, a)) for a in range(self.env.action_space.n)]
-        zs = [math.exp(q) for q in qs]
-        p = [z / sum(zs) for z in zs]
-        return numpy.random.choice(len(qs), p=p)
+        p = [self.q.prob(state, action)
+             for action in range(self.env.action_space.n)]
+        p = numpy.array(p) / sum(p)
+        return numpy.random.choice(len(p), p=p)
 
 
 @click.command()
@@ -159,12 +160,10 @@ class Decision:
 @click.option('--render', is_flag=True, default=False)
 def main(verbose, render):
 
-    def myreward(r: float, state: State, time, done) -> float:
+    def myreward(r: float, time: int, done: bool) -> float:
         if done:
-            return time - 100
-        return 0
-        # reg = abs(state[0]) + abs(state[1]) + abs(state[2]) + abs(state[3])
-        # return 10.0 - reg * 10
+            return time - 200.0
+        return time * 0.1
 
     def episode(env: gym.Env,
                 dec: Decision,
@@ -189,7 +188,7 @@ def main(verbose, render):
             score += reward
 
             # update
-            reward = myreward(reward, state_next, time, done)
+            reward = myreward(reward, time, done)
             if verbose:
                 click.secho(
                         f'time={time}; '
@@ -209,25 +208,9 @@ def main(verbose, render):
         env.close()
         return score, losses
 
-    def test():
-        states = [
-            [0, 0, 0.1, 0.1],
-            [0, 0, -0.1, -0.1],
-            [0, 0, 0.2, 0.2],
-            [0, 0, -0.2, -0.2],
-            [2, -1, 0.1, 0.1],
-            [2, -1, -0.1, -0.1],
-            [-1, 1, 0.2, 0.2],
-            [-1, 1, -0.2, -0.2],
-        ]
-        for s in states:
-            qs = [q(numpy.array(s), a) for a in range(2)]
-            click.secho(f'{s} => {qs} => {numpy.argmax(qs)}', fg='cyan')
-
     env = make_env()
     q = Q(env)
     dec = Decision(env, q)
-    max_score = 0.0
 
     if vis:
         Y = [0.0]
@@ -238,14 +221,13 @@ def main(verbose, render):
     for ep in itertools.count():
 
         score, losses = episode(env, dec, q)
+        loss_avg = sum(losses) / len(losses)
 
         if vis:
-            loss_avg = sum(losses) / len(losses)
             vis.line([loss_avg], [ep+1], win=win_loss, update='append')
             vis.line([score], [ep+1], win=win_score, update='append')
 
-        max_score = max(score, max_score)
-        click.secho(f'Episode:{ep:3d} score={score}, max_score={max_score}')
+        click.secho(f'Episode:{ep:3d} score={score}, loss={loss_avg}')
 
 
 if __name__ == '__main__':
