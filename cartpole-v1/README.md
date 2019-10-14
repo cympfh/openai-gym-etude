@@ -2,6 +2,7 @@
 
 ```bash
 pip install gym click
+pip install -U git+https://github.com/cympfh/gnuplot-py.git
 ```
 
 ## simple manual rule
@@ -19,3 +20,9 @@ average=500.0 max=500.0 min=500.0
 ## Q learning
 
 with `pytorch`.
+
+```bash
+python ./q.py -E 10000 --agnostic
+```
+
+![](images/q.png)
